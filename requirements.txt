@@ -1,0 +1,144 @@
+import cv2
+import os
+import numpy as np
+from insightface.app import FaceAnalysis
+
+# ---------------- CONFIG ----------------
+DATABASE_PATH = "database"
+THRESHOLD = 1.0
+
+# ---------------- INIT MODEL ----------------
+print("🚀 Initializing InsightFace model...")
+app = FaceAnalysis()
+app.prepare(ctx_id=-1, det_size=(640, 640))  # CPU + better detection
+
+# ---------------- LOAD DATABASE ----------------
+known_embeddings = []
+known_names = []
+
+print("\n🔄 Loading face database...")
+
+if not os.path.exists(DATABASE_PATH):
+    print("❌ 'database' folder not found!")
+    exit()
+
+total_images = 0
+valid_faces = 0
+
+for person_name in os.listdir(DATABASE_PATH):
+    person_folder = os.path.join(DATABASE_PATH, person_name)
+
+    if not os.path.isdir(person_folder):
+        continue
+
+    print(f"\n📁 Processing person: {person_name}")
+
+    for file in os.listdir(person_folder):
+        if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+            total_images += 1
+
+            img_path = os.path.join(person_folder, file)
+            print(f"   🔍 Reading: {file}")
+
+            img = cv2.imread(img_path)
+
+            if img is None:
+                print("   ❌ Failed to load image")
+                continue
+
+            # Resize for better detection
+            img = cv2.resize(img, (640, 640))
+
+            faces = app.get(img)
+            print(f"   👤 Faces detected: {len(faces)}")
+
+            if len(faces) > 0:
+                embedding = faces[0].embedding
+                known_embeddings.append(embedding)
+                known_names.append(person_name)
+                valid_faces += 1
+                print("   ✅ Face added to database")
+            else:
+                print("   ⚠️ No face detected")
+
+# ---------------- VALIDATION ----------------
+print(f"\n📊 Summary:")
+print(f"   Total images scanned: {total_images}")
+print(f"   Valid faces found: {valid_faces}")
+
+if valid_faces == 0:
+    print("\n❌ No valid faces found in database!")
+    print("👉 Fix your images (clear, front-facing faces required)")
+    exit()
+
+known_embeddings = np.array(known_embeddings)
+
+print("\n✅ Database loaded successfully!")
+
+# ---------------- INPUT IMAGE ----------------
+print("\n📂 Enter image path to test")
+file_path = input("👉 Path: ").strip()
+
+if not os.path.exists(file_path):
+    print("❌ File not found!")
+    exit()
+
+img = cv2.imread(file_path)
+
+if img is None:
+    print("❌ Failed to load image!")
+    exit()
+
+# Resize for consistency
+img = cv2.resize(img, (640, 640))
+
+# ---------------- RECOGNITION ----------------
+print("\n🧠 Running face recognition...")
+
+faces = app.get(img)
+
+if len(faces) == 0:
+    print("❌ No faces detected in input image")
+    exit()
+
+recognized = 0
+
+for face in faces:
+    emb = face.embedding
+
+    distances = np.linalg.norm(known_embeddings - emb, axis=1)
+    best_match = np.argmin(distances)
+
+    if distances[best_match] < THRESHOLD:
+        name = known_names[best_match]
+        recognized += 1
+    else:
+        name = "Unknown"
+
+    # Draw bounding box
+    x1, y1, x2, y2 = face.bbox.astype(int)
+
+    cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 2)
+
+    # Label background
+    cv2.rectangle(img, (x1, y1 - 30), (x2, y1), (0, 0, 0), -1)
+
+    # Label text
+    cv2.putText(img, name, (x1 + 5, y1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                (255, 255, 255), 2)
+
+    print(f"👉 Detected: {name}")
+
+# ---------------- OUTPUT ----------------
+if recognized == 0:
+    print("\n⚠️ Faces detected but none recognized")
+else:
+    print(f"\n✅ Recognized {recognized} face(s)")
+
+cv2.imwrite("result.jpg", img)
+print("📁 Result saved as result.jpg")
+
+cv2.imshow("Result", img)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
